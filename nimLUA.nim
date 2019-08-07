@@ -565,7 +565,7 @@ proc proxyMixer*(ctx: proxyDesc, proxyName: string): NimNode {.compileTime.} =
   if ctx.subject.kind == nnkSym:
     let subject = getImpl(ctx.subject)
     if not checkObject(subject):
-      error($ctx.subject & ": not an object")
+      error($ctx.subject & ": not an object: " & ctx.subject.treeRepr)
     nlb.add "  ctx.subject = bindSym\"$1\"\n" % [$ctx.subject]
   else:
     nlb.add "  ctx.subject = newEmptyNode()\n"
@@ -1158,7 +1158,7 @@ proc registerArrayCheck(ctx: proxyDesc, s: NimNode, id: string, procName: string
 proc genArrayArg(ctx: proxyDesc, nType: NimNode, i: int, procName: string): string {.compileTime.} =
   var lo, hi, mode: int
 
-  if nType[1].kind == nnkInfix:
+  if nType[1].kind in {nnkInfix, nnkBracketExpr}:
     lo = int(nType[1][1].intVal)
     hi = int(nType[1][2].intVal)
     mode = 1
@@ -1350,6 +1350,9 @@ proc constructComplexArg(ctx: proxyDesc, mType: NimNode, i: int, procName: strin
     if nType.kind in {nnkObjectTy, nnkRefTy}:
       needCheck = "if not $1.isNil:\n"
       return checkUD(registerObject(mType[0]), $i)
+    if nType.kind == nnkBracketExpr:
+      if $nType[0] == "array":
+        return genArrayArg(ctx, nType, i, procName)
     if nType.kind == nnkSym:
       outValList.add constructBasicRet(nType, "arg" & $(i-1), "", procName)
       return constructBasicArg(nType, i, procName)
