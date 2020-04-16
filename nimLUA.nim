@@ -96,7 +96,7 @@ type
     currentLine: int
     msg: string
 
-  NLErrorFunc* = proc(ctx: pointer, err: NLError) {.nimcall.}
+  NLErrorFunc* = proc(L: PState, ctx: pointer, err: NLError) {.cdecl.}
 
 let globalClosure {.compileTime.} = "_gCLV"
 
@@ -139,30 +139,18 @@ macro nimLuaOptions*(opt: nlOptions, mode: bool): untyped =
   result = newEmptyNode()
 
 proc toString(c: LUA_TYPE): string =
-  const typeName = ["NIL", "BOOLEAN", "LIGHTUSERDATA", "NUMBER", "STRING",
-    "TABLE", "FUNCTION", "USERDATA", "THREAD", "NUMTAGS"]
+  const typeName = ["nil", "boolean", "userdata", "number", "string",
+    "table", "function", "userdata", "thread", "numtags"]
   if c in {LNIL..LNUMTAGS}:
     return typeName[ord(c)]
   elif c == LNONE:
-    return "NONE"
+    return "none"
   else:
-    return "INVALID"
+    return "invalid"
 
-proc nimDebug(L: PState, idx: cint, eType: string) =
-  var dbg: TDebug
-  if L.getStack(1, dbg.addr) != 0:
-    if L.getInfo("Sln", dbg.addr) != 0:
-      let gType = L.getType(idx).toString()
-      let err = NLError(source: $dbg.source, currentLine: dbg.currentLine,
-        msg: "expected `$1`, got `$2`" % [eType, $gType])
-      L.pushLightUserData(cast[pointer](IDErrorContext))
-      L.rawGet(LUA_REGISTRYINDEX) # get correct error context
-      let errCtx = L.toUserData(-1)
-      L.pushLightUserData(cast[pointer](IDErrorFunc))
-      L.rawGet(LUA_REGISTRYINDEX) # get correct error function
-      let errFunc = cast[NLErrorFunc](L.toUserData(-1))
-      L.pop(2)
-      errFunc(errCtx, err)
+proc typeError(L: PState, idx: cint, eType: string) =
+  let gType = L.getType(idx).toString()
+  discard L.error("expected $1, got $2" % [eType, $gType])
 
 #inside macro, const bool become nnkIntLit, that's why we need to use
 #this trick to test for bool type using 'when internalTestForBOOL(n)'
@@ -709,7 +697,7 @@ proc checkUD(s, n: string): string {.compileTime.} =
   result = "cast[ptr NL_$1Proxy](L.nimCheckUData($2.cint, NL_$1, NL_$1name))\n" % [s, n]
 
 proc newUD(s: string): string {.compileTime.} =
-  result = "cast[ptr NL_$1Proxy](L.newUserData(sizeof(NL_$1Proxy)))\n" % [s]
+  result = "cast[ptr NL_$1Proxy](L.newUserData(sizeof(NL_$1Proxy).csize_t))\n" % [s]
 
 proc addMemberCap(SL, libName: string, argLen: int): string {.compileTime.} =
   when nloAddMember in gOptions:
@@ -762,8 +750,8 @@ proc nimLuaPanic(L: PState): cint {.cdecl.} =
   L.pop(1)
   return 0
 
-proc stdNimLuaErrFunc(ctx: pointer, err: NLError) =
-  echo "$1:$2 warning: $3" % [err.source, $err.currentLine, err.msg]
+proc stdNimLuaErrFunc(L: PState, ctx: pointer, err: NLError) {.cdecl.} =
+  discard L.error(err.msg)
 
 proc NLSetErrorHandler*(L: PState, errFunc: NLErrorFunc) =
   L.pushLightUserData(cast[pointer](IDErrorFunc))
@@ -929,31 +917,31 @@ macro bindEnum*(arg: varargs[untyped]): untyped =
 proc nimCheckString*(L: PState, idx: cint): string =
   if L.isStrictString(idx): result = L.toString(idx)
   else:
-    L.nimDebug(idx.cint, "string")
+    L.typeError(idx.cint, "string")
     result = ""
 
 proc nimCheckBool*(L: PState, idx: cint): bool =
   if L.isBoolean(idx): result = if L.toBoolean(idx) == 0: false else: true
   else:
-    L.nimDebug(idx.cint, "bool")
+    L.typeError(idx.cint, "bool")
     result = false
 
 proc nimCheckInteger*(L: PState, idx: cint): int =
   if L.isInteger(idx) != 0: result = L.toInteger(idx).int
   else:
-    L.nimDebug(idx.cint, "int")
+    L.typeError(idx.cint, "int")
     result = 0
 
 proc nimCheckNumber*(L: PState, idx: cint): float64 =
   if L.isNumber(idx) != 0: result = L.toNumber(idx).float64
   else:
-    L.nimDebug(idx.cint, "float")
+    L.typeError(idx.cint, "float")
     result = 0.0
 
 proc nimCheckCstring*(L: PState, idx: cint): cstring =
   if L.isStrictString(idx): result = L.toLString(idx, nil)
   else:
-    L.nimDebug(idx.cint, "cstring")
+    L.typeError(idx.cint, "cstring")
     result = nil
 
 proc nimCheckChar*(L: PState, idx: cint): char =
@@ -987,7 +975,7 @@ proc nimCheckUData*(L: PState, idx, key: int, name: string): pointer =
         return p
 
   # else error
-  L.nimDebug(idx.cint, name)
+  L.typeError(idx.cint, name)
   result = nil
 
 let
@@ -2036,7 +2024,7 @@ proc getRegisteredUD*[T](L: PState, proxy: T): ptr T =
     return result
 
   L.pop(1) # pop nil
-  result = cast[ptr T](L.newUserData(sizeof(T)))
+  result = cast[ptr T](L.newUserData(sizeof(T).csize_t))
   L.pushLightUserData(cast[pointer](proxy.ud))
   L.pushValue(-2)
   L.rawSet(LUA_REGISTRYINDEX)

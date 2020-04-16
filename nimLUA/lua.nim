@@ -17,27 +17,44 @@ const
 #{.deadCodeElim: on.}
 #when defined(useLuaJIT):
 #  {.warning: "Lua JIT does not support Lua 5.3 at this time."}
-
-when not defined(useLuaJIT):
-  when defined(MACOSX):
-    const
-      LIB_NAME* = "liblua53.dylib"
-  elif defined(UNIX):
-    const
-      LIB_NAME* = "liblua53.so"
+when not defined(staticLua):
+  when not defined(useLuaJIT):
+    when defined(MACOSX):
+      const
+        LIB_NAME* = "liblua53.dylib"
+    elif defined(UNIX):
+      const
+        LIB_NAME* = "liblua(53|5.3).so"
+    else:
+      const
+        LIB_NAME* = "lua53.dll"
   else:
-    const
-      LIB_NAME* = "lua53.dll"
+    when defined(MACOSX):
+      const
+        LIB_NAME* = "libluajit.dylib"
+    elif defined(UNIX):
+      const
+        LIB_NAME* = "libluajit.so"
+    else:
+      const
+        LIB_NAME* = "luajit.dll"
 else:
-  when defined(MACOSX):
-    const
-      LIB_NAME* = "libluajit.dylib"
-  elif defined(UNIX):
-    const
-      LIB_NAME* = "libluajit.so"
-  else:
-    const
-      LIB_NAME* = "luajit.dll"
+  from os import parentDir, `/`
+  block:
+    const S = currentSourcePath.parentDir/"luasrc"
+    when defined(posix):
+      {.passC: "-DLUA_USE_POSIX".}
+    {.compile: S/"lapi.c", compile: S/"lcode.c", compile: S/"lctype.c",
+      compile: S/"ldebug.c", compile: S/"ldo.c", compile: S/"ldump.c",
+      compile: S/"lfunc.c", compile: S/"lgc.c", compile: S/"llex.c",
+      compile: S/"lmem.c", compile: S/"lobject.c", compile: S/"lopcodes.c",
+      compile: S/"lparser.c", compile: S/"lstate.c", compile: S/"lstring.c",
+      compile: S/"ltable.c", compile: S/"ltm.c", compile: S/"lundump.c",
+      compile: S/"lvm.c", compile: S/"lzio.c", compile: S/"lauxlib.c",
+      compile: S/"lbaselib.c", compile: S/"lbitlib.c", compile: S/"lcorolib.c",
+      compile: S/"ldblib.c", compile: S/"liolib.c", compile: S/"lmathlib.c",
+      compile: S/"loslib.c", compile: S/"lstrlib.c", compile: S/"ltablib.c",
+      compile: S/"lutf8lib.c", compile: S/"loadlib.c", compile: S/"linit.c".}
 
 const
   # mark for precompiled code ('<esc>Lua')
@@ -88,11 +105,11 @@ type
   TCFunction* = proc (L: PState): cint{.cdecl.}
 
   #* functions that read/write blocks when loading/dumping Lua chunks
-  TReader* = proc (L: PState; ud: pointer; sz: var csize): cstring {.cdecl.}
-  TWriter* = proc (L: PState; p: pointer; sz: csize; ud: pointer): cint {.cdecl.}
+  TReader* = proc (L: PState; ud: pointer; sz: var csize_t): cstring {.cdecl.}
+  TWriter* = proc (L: PState; p: pointer; sz: csize_t; ud: pointer): cint {.cdecl.}
 
   #* prototype for memory-allocation functions
-  TAlloc* = proc (ud, p: pointer; osize, nsize: csize): pointer
+  TAlloc* = proc (ud, p: pointer; osize, nsize: csize_t): pointer
 
 #* basic types
 const
@@ -127,7 +144,10 @@ type
   lua_Number* = float64  # type of numbers in Lua
   lua_Integer* = int64    # ptrdiff_t \ type for integer functions
 
-{.push callconv: cdecl, dynlib: LIB_NAME .} # importc: "lua_$1"  was not allowed?
+when not defined(staticLua):
+  {.push callconv: cdecl, dynlib: LIB_NAME .} # importc: "lua_$1"  was not allowed?
+else:
+  {.push callconv: cdecl.}
 {.pragma: ilua, importc: "lua_$1".} # lua.h
 {.pragma: iluaLIB, importc: "lua$1".} # lualib.h
 {.pragma: iluaL, importc: "luaL_$1".} # lauxlib.h
@@ -169,8 +189,8 @@ proc typename*(L: PState; tp: cint): cstring {.ilua.}
 proc tonumberx*(L: PState; idx: cint; isnum: ptr cint): lua_Number {.ilua.}
 proc tointegerx*(L: PState; idx: cint; isnum: ptr cint): lua_Integer {.ilua.}
 proc toboolean*(L: PState; idx: cint): cint {.ilua.}
-proc tolstring*(L: PState; idx: cint; len: ptr csize): cstring {.ilua.}
-proc rawlen*(L: PState; idx: cint): csize {.ilua.}
+proc tolstring*(L: PState; idx: cint; len: ptr csize_t): cstring {.ilua.}
+proc rawlen*(L: PState; idx: cint): csize_t {.ilua.}
 proc tocfunction*(L: PState; idx: cint): TCFunction {.ilua.}
 proc touserdata*(L: PState; idx: cint): pointer {.ilua.}
 proc tothread*(L: PState; idx: cint): PState {.ilua.}
@@ -202,7 +222,7 @@ proc compare*(L: PState; idx1: cint; idx2: cint; op: cint): cint {.ilua.}
 proc pushnil*(L: PState) {.ilua.}
 proc pushnumber*(L: PState; n: lua_Number) {.ilua.}
 proc pushinteger*(L: PState; n: lua_Integer) {.ilua.}
-proc pushlstring*(L: PState; s: cstring; len: csize): cstring {.ilua.}
+proc pushlstring*(L: PState; s: cstring; len: csize_t): cstring {.ilua.}
 proc pushstring*(L: PState; s: cstring): cstring {.ilua.}
 proc pushvfstring*(L: PState; fmt: cstring): cstring {.varargs,ilua.}
 proc pushfstring*(L: PState; fmt: cstring): cstring {.varargs,ilua.}
@@ -221,7 +241,7 @@ proc rawget*(L: PState; idx: cint) {.ilua.}
 proc rawgeti*(L: PState; idx: cint; n: cint) {.ilua.}
 proc rawgetp*(L: PState; idx: cint; p: pointer) {.ilua.}
 proc createtable*(L: PState; narr: cint; nrec: cint) {.ilua.}
-proc newuserdata*(L: PState; sz: csize): pointer {.ilua.}
+proc newuserdata*(L: PState; sz: csize_t): pointer {.ilua.}
 proc getmetatable*(L: PState; idx: cint): cint {.ilua.}
 proc getuservalue*(L: PState; idx: cint) {.ilua.}
 
@@ -324,13 +344,13 @@ proc isnoneornil*(L: PState; n: cint): bool {.inline.} =
   L.luatype(n) <= 0
 
 proc pushliteral*(L: PState, s: string): cstring {.inline, discardable.} =
-  L.pushlstring(s, s.len)
+  L.pushlstring(s, s.len.csize_t)
 
 proc pushglobaltable*(L: PState) {.inline.} =
   L.rawgeti(LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS)
 
 proc tostring*(L: PState; index: cint): string =
-  var len: csize = 0
+  var len: csize_t = 0
   var s = L.tolstring(index, addr(len))
   result = newString(len)
   copyMem(result.cstring, s, len)
