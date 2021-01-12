@@ -697,7 +697,7 @@ proc checkUD(s, n: string): string {.compileTime.} =
   result = "cast[ptr NL_$1Proxy](L.nimCheckUData($2.cint, NL_$1, NL_$1name))\n" % [s, n]
 
 proc newUD(s: string): string {.compileTime.} =
-  result = "cast[ptr NL_$1Proxy](L.newUserData(sizeof(NL_$1Proxy).csize_t))\n" % [s]
+  result = "cast[ptr NL_$1Proxy](L.newuserdatauv(sizeof(NL_$1Proxy).csize_t, 0))\n" % [s]
 
 proc addMemberCap(SL, libName: string, argLen: int): string {.compileTime.} =
   when nloAddMember in gOptions:
@@ -2024,7 +2024,7 @@ proc getRegisteredUD*[T](L: PState, proxy: T): ptr T =
     return result
 
   L.pop(1) # pop nil
-  result = cast[ptr T](L.newUserData(sizeof(T).csize_t))
+  result = cast[ptr T](L.newuserdatauv(sizeof(T).csize_t, 0))
   L.pushLightUserData(cast[pointer](proxy.ud))
   L.pushValue(-2)
   L.rawSet(LUA_REGISTRYINDEX)
